@@ -1,6 +1,7 @@
 import logging
 
 import redis.asyncio as redis
+import uvicorn
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -15,7 +16,7 @@ from src.router import reg_root_api_router
 from src.services.storage.s3 import S3Storage
 from src.utils import RedisClient, AiohttpClient
 
-config = load_ini_config('./config.ini')
+config = load_ini_config('../config.ini')
 log = logging.getLogger(__name__)
 
 log.debug("Инициализация приложения FastAPI.")
@@ -24,31 +25,14 @@ app = FastAPI(
     debug=config.DEBUG,
     version=config.BASE.VERSION,
     description=config.BASE.DESCRIPTION,
-    root_path="/api/v1" if not config.DEBUG else "",
-    docs_url="/api/docs" if config.DEBUG else "/docs",
-    redoc_url="/api/redoc" if config.DEBUG else "/redoc",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
     contact={
         "name": config.BASE.CONTACT.NAME,
         "url": config.BASE.CONTACT.URL,
         "email": config.BASE.CONTACT.EMAIL,
     }
 )
-
-
-async def init_postgresql_db():
-    engine, session = create_psql_async_session(
-        username=config.DB.POSTGRESQL.USERNAME,
-        password=config.DB.POSTGRESQL.PASSWORD,
-        host=config.DB.POSTGRESQL.HOST,
-        port=config.DB.POSTGRESQL.PORT,
-        database=config.DB.POSTGRESQL.DATABASE,
-        echo=config.DEBUG,
-    )
-    app.state.db_session = session
-
-    async with engine.begin() as conn:
-        # await conn.run_sync(tables.Base.metadata.drop_all)
-        await conn.run_sync(tables.Base.metadata.create_all)
 
 
 async def init_sqlite_db():
@@ -86,14 +70,9 @@ def init_file_storage():
 @app.on_event("startup")
 async def on_startup():
     log.debug("Executing FastAPI startup event handler.")
-    if config.DB.POSTGRESQL:
-        await init_postgresql_db()
-    else:
-        await init_sqlite_db()
+    await init_sqlite_db(),
     if config.DB.REDIS:
         app.state.redis = RedisClient(await redis_pool())
-    if config.DB.S3:
-        init_file_storage()
     app.state.http_client = AiohttpClient()
     print("FastAPI startup event handler executed.")
 
@@ -142,3 +121,7 @@ app.add_exception_handler(404, handle_404_error)
 app.add_exception_handler(RequestValidationError, handle_pydantic_error)
 log.debug("Registering middleware.")
 app.add_middleware(JWTMiddlewareHTTP)
+
+
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=False)
